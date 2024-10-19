@@ -1,158 +1,65 @@
-# DiskParted.ps1
-# Disk management tool using PowerShell GUI
-# Licensed under the GNU General Public License (GPL)
+Add-Type -AssemblyName System.Windows.Forms
 
-Add-Type -AssemblyName PresentationFramework
-
-function Show-Message {
+# Function to run DiskPart commands
+function Run-DiskPart {
     param (
-        [string]$Message,
-        [string]$Title = "DiskParted"
+        [string]$Command
     )
-    [System.Windows.MessageBox]::Show($Message, $Title)
+    $process = Start-Process -FilePath "diskpart.exe" -ArgumentList "/s $Command" -NoNewWindow -PassThru
+    $process.WaitForExit()
 }
 
-function Execute-DiskPart {
-    param (
-        [string]$CommandFile
-    )
-    $diskPartProcess = Start-Process -FilePath "diskpart.exe" -ArgumentList "/s $CommandFile" -Wait -PassThru
-    return $diskPartProcess.ExitCode
-}
+# Create a new Form
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "DiskParted"
+$form.Size = New-Object System.Drawing.Size(400, 300)
 
-function Update-Disks {
-    $disks = Get-Content "$env:TEMP\list_disks.txt" -ErrorAction SilentlyContinue
-    $volumes = Get-Content "$env:TEMP\list_volumes.txt" -ErrorAction SilentlyContinue
+# Create a Label
+$label = New-Object System.Windows.Forms.Label
+$label.Text = "Enter DiskPart Command:"
+$label.AutoSize = $true
+$label.Location = New-Object System.Drawing.Point(10, 20)
 
-    # Clear previous list
-    $ListViewDisks.Items.Clear()
-    $ListViewVolumes.Items.Clear()
+# Create a TextBox for the command input
+$textBox = New-Object System.Windows.Forms.TextBox
+$textBox.Location = New-Object System.Drawing.Point(10, 50)
+$textBox.Size = New-Object System.Drawing.Size(360, 20)
 
-    foreach ($disk in $disks) {
-        $ListViewDisks.Items.Add($disk)
-    }
-
-    foreach ($volume in $volumes) {
-        $ListViewVolumes.Items.Add($volume)
-    }
-}
-
-# Check if running as admin
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    # Restart as administrator
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs
-    exit
-}
-
-# Create temp commands file
-$tempFolder = [System.IO.Path]::GetTempPath()
-$commandFile = "$tempFolder\diskpart_commands.txt"
-
-# Create the GUI
-$Window = New-Object System.Windows.Window
-$Window.Title = "DiskParted"
-$Window.Width = 600
-$Window.Height = 400
-
-$Grid = New-Object System.Windows.Controls.Grid
-$Window.Content = $Grid
-
-$ListViewDisks = New-Object System.Windows.Controls.ListView
-$ListViewDisks.Margin = "10,10,10,10"
-$ListViewDisks.Width = 260
-$ListViewDisks.Height = 300
-$Grid.Children.Add($ListViewDisks)
-
-$ListViewVolumes = New-Object System.Windows.Controls.ListView
-$ListViewVolumes.Margin = "280,10,10,10"
-$ListViewVolumes.Width = 260
-$ListViewVolumes.Height = 300
-$Grid.Children.Add($ListViewVolumes)
-
-$StartButton = New-Object System.Windows.Controls.Button
-$StartButton.Content = "Start"
-$StartButton.Margin = "10,320,0,0"
-$StartButton.Width = 100
-$StartButton.Height = 30
-$StartButton.Add_Click({
-    $selectedDisk = $ListViewDisks.SelectedItem
-    if ($selectedDisk) {
-        Add-Content -Path $commandFile -Value "select disk $selectedDisk`nonline"
-        $exitCode = Execute-DiskPart -CommandFile $commandFile
-        if ($exitCode -eq 0) {
-            Show-Message "Disk $selectedDisk is now online."
-        } else {
-            Show-Message "Failed to bring disk $selectedDisk online."
-        }
-        Update-Disks
+# Create a Button to execute the command
+$button = New-Object System.Windows.Forms.Button
+$button.Text = "Execute"
+$button.Location = New-Object System.Drawing.Point(10, 80)
+$button.Size = New-Object System.Drawing.Size(75, 23)
+$button.Add_Click({
+    $command = $textBox.Text
+    if (-not [string]::IsNullOrWhiteSpace($command)) {
+        # Create a temporary script file for DiskPart
+        $tempFile = [System.IO.Path]::GetTempFileName() + ".txt"
+        Set-Content -Path $tempFile -Value $command
+        Run-DiskPart -Command $tempFile
+        
+        # Optionally, display a message box with success information
+        [System.Windows.Forms.MessageBox]::Show("Command executed: $command", "Success")
+        
+        # Clean up the temporary file
+        Remove-Item -Path $tempFile -Force
     } else {
-        Show-Message "Please select a disk."
+        [System.Windows.Forms.MessageBox]::Show("Please enter a command.", "Error")
     }
 })
-$Grid.Children.Add($StartButton)
 
-$FormatButton = New-Object System.Windows.Controls.Button
-$FormatButton.Content = "Format"
-$FormatButton.Margin = "120,320,0,0"
-$FormatButton.Width = 100
-$FormatButton.Height = 30
-$FormatButton.Add_Click({
-    $selectedVolume = $ListViewVolumes.SelectedItem
-    if ($selectedVolume) {
-        $fsType = "NTFS"  # Set the file system type as needed
-        Add-Content -Path $commandFile -Value "select volume $selectedVolume`nformat fs=$fsType quick"
-        $exitCode = Execute-DiskPart -CommandFile $commandFile
-        if ($exitCode -eq 0) {
-            Show-Message "Volume $selectedVolume has been formatted as $fsType."
-        } else {
-            Show-Message "Failed to format volume $selectedVolume."
-        }
-        Update-Disks
-    } else {
-        Show-Message "Please select a volume."
-    }
-})
-$Grid.Children.Add($FormatButton)
+# Create a Button to close the application
+$closeButton = New-Object System.Windows.Forms.Button
+$closeButton.Text = "Close"
+$closeButton.Location = New-Object System.Drawing.Point(100, 80)
+$closeButton.Size = New-Object System.Drawing.Size(75, 23)
+$closeButton.Add_Click({ $form.Close() })
 
-$StopButton = New-Object System.Windows.Controls.Button
-$StopButton.Content = "Stop Disk"
-$StopButton.Margin = "230,320,0,0"
-$StopButton.Width = 100
-$StopButton.Height = 30
-$StopButton.Add_Click({
-    $selectedDisk = $ListViewDisks.SelectedItem
-    if ($selectedDisk) {
-        Add-Content -Path $commandFile -Value "select disk $selectedDisk`noffline"
-        $exitCode = Execute-DiskPart -CommandFile $commandFile
-        if ($exitCode -eq 0) {
-            Show-Message "Disk $selectedDisk is now offline."
-        } else {
-            Show-Message "Failed to take disk $selectedDisk offline."
-        }
-        Update-Disks
-    } else {
-        Show-Message "Please select a disk."
-    }
-})
-$Grid.Children.Add($StopButton)
+# Add controls to the Form
+$form.Controls.Add($label)
+$form.Controls.Add($textBox)
+$form.Controls.Add($button)
+$form.Controls.Add($closeButton)
 
-$CloseButton = New-Object System.Windows.Controls.Button
-$CloseButton.Content = "Close"
-$CloseButton.Margin = "340,320,0,0"
-$CloseButton.Width = 100
-$CloseButton.Height = 30
-$CloseButton.Add_Click({
-    $Window.Close()
-})
-$Grid.Children.Add($CloseButton)
-
-# Execute DiskPart to list disks and volumes
-Add-Content -Path $commandFile -Value "list disk`n"
-Add-Content -Path $commandFile -Value "list volume`n"
-Execute-DiskPart -CommandFile $commandFile
-
-# Update the lists in the GUI
-Update-Disks
-
-# Show the window
-$Window.ShowDialog() | Out-Null
+# Show the Form
+$form.ShowDialog()
