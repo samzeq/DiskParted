@@ -14,25 +14,14 @@ if (-not (Check-Admin)) {
 # Add necessary assemblies
 Add-Type -AssemblyName System.Windows.Forms
 
-# Function to execute DiskPart commands and get output
-function Execute-DiskPart {
-    param (
-        [string]$Command
-    )
-    $tempFile = "$env:TEMP\diskpart_output.txt"
-    $commandString = "diskpart.exe /s $tempFile"
-    
-    Set-Content -Path $tempFile -Value $Command
-    $output = & cmd /c $commandString
-    Get-Content $tempFile
-    Remove-Item $tempFile -Force
-}
-
 # Create the main form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "DiskParted"
 $form.Size = New-Object System.Drawing.Size(600, 400)
 $form.StartPosition = "CenterScreen"
+
+# Set the icon for the form using the PowerShell executable icon
+$form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Reflection.Assembly]::GetExecutingAssembly().Location)
 
 # Create DataGridView for disks
 $dataGridView = New-Object System.Windows.Forms.DataGridView
@@ -40,20 +29,44 @@ $dataGridView.Size = New-Object System.Drawing.Size(580, 300)
 $dataGridView.Location = New-Object System.Drawing.Point(10, 10)
 $dataGridView.AutoGenerateColumns = $true
 
+# Function to execute DiskPart commands and get output
+function Execute-DiskPart {
+    param (
+        [string]$Command
+    )
+    $tempFile = "$env:TEMP\diskpart_output.txt"
+    $commandString = "diskpart.exe /s $tempFile"
+
+    # Write command to temporary file
+    Set-Content -Path $tempFile -Value $Command
+    & cmd /c $commandString | Out-Null # Run DiskPart command
+    $output = Get-Content $tempFile
+    Remove-Item $tempFile -Force
+    return $output
+}
+
 # Function to update the disk list
 function Update-DiskList {
     $diskList = Execute-DiskPart "list disk"
     $disks = @()
+    
     foreach ($line in $diskList) {
-        if ($line -match '^\s*(\d+)\s+(.*)') {
+        # Match the output for disk information
+        if ($line -match '^\s*(\d+)\s+(\d+)\s+(.*)') {
             $disks += New-Object PSObject -Property @{
                 DiskNumber = $matches[1]
                 Size       = $matches[2]
-                Status     = "Online" # Placeholder for actual status
+                Status     = $matches[3]
             }
         }
     }
-    $dataGridView.DataSource = $disks
+    
+    # Set DataGridView DataSource
+    if ($disks.Count -gt 0) {
+        $dataGridView.DataSource = $disks
+    } else {
+        $dataGridView.DataSource = $null
+    }
 }
 
 Update-DiskList
