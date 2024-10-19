@@ -13,6 +13,7 @@ if (-not (Check-Admin)) {
 
 # Add necessary assemblies
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # Create the main form
 $form = New-Object System.Windows.Forms.Form
@@ -21,13 +22,14 @@ $form.Size = New-Object System.Drawing.Size(600, 400)
 $form.StartPosition = "CenterScreen"
 
 # Set the icon for the form using the PowerShell executable icon
-$form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Reflection.Assembly]::GetExecutingAssembly().Location)
+$form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon("C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
 
 # Create DataGridView for disks
 $dataGridView = New-Object System.Windows.Forms.DataGridView
 $dataGridView.Size = New-Object System.Drawing.Size(580, 300)
 $dataGridView.Location = New-Object System.Drawing.Point(10, 10)
 $dataGridView.AutoGenerateColumns = $true
+$dataGridView.ReadOnly = $true
 
 # Function to execute DiskPart commands and get output
 function Execute-DiskPart {
@@ -101,7 +103,7 @@ $btnFormat.Add_Click({
         $formatForm.Size = New-Object System.Drawing.Size(300, 200)
         $formatForm.StartPosition = "CenterParent"
 
-        # Create labels and controls
+        # Create labels and controls for format options
         $lblFileSystem = New-Object System.Windows.Forms.Label
         $lblFileSystem.Text = "File System:"
         $lblFileSystem.Location = New-Object System.Drawing.Point(10, 20)
@@ -142,32 +144,128 @@ $btnFormat.Add_Click({
     }
 })
 
-$btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Location = New-Object System.Drawing.Point(190, 320)
-$btnStop.Size = New-Object System.Drawing.Size(75, 30)
-$btnStop.Text = "Stop Disk"
-$btnStop.Add_Click({
+$btnSelectPartition = New-Object System.Windows.Forms.Button
+$btnSelectPartition.Location = New-Object System.Drawing.Point(190, 320)
+$btnSelectPartition.Size = New-Object System.Drawing.Size(120, 30)
+$btnSelectPartition.Text = "Select Partition"
+$btnSelectPartition.Add_Click({
     $selectedDisk = $dataGridView.CurrentRow
     if ($selectedDisk) {
-        $action = "select disk $($selectedDisk.DiskNumber)`r`n offline disk"
-        $selectedActions += $action
+        # Open partition selection form
+        $partitionForm = New-Object System.Windows.Forms.Form
+        $partitionForm.Text = "Select Partition"
+        $partitionForm.Size = New-Object System.Drawing.Size(300, 250)
+        $partitionForm.StartPosition = "CenterParent"
+
+        # Create DataGridView for partitions
+        $partitionDataGridView = New-Object System.Windows.Forms.DataGridView
+        $partitionDataGridView.Size = New-Object System.Drawing.Size(270, 130)
+        $partitionDataGridView.Location = New-Object System.Drawing.Point(10, 10)
+        $partitionDataGridView.AutoGenerateColumns = $true
+        $partitionDataGridView.ReadOnly = $true
+
+        # Function to update the partition list
+        function Update-PartitionList {
+            $partitionList = Execute-DiskPart "select disk $($selectedDisk.DiskNumber)`r`n list partition"
+            $partitions = @()
+
+            foreach ($line in $partitionList) {
+                # Match the output for partition information
+                if ($line -match '^\s*(\d+)\s+(\d+)\s+(.*)') {
+                    $partitions += New-Object PSObject -Property @{
+                        PartitionNumber = $matches[1]
+                        Size            = $matches[2]
+                        Status          = $matches[3]
+                    }
+                }
+            }
+
+            # Set DataGridView DataSource
+            if ($partitions.Count -gt 0) {
+                $partitionDataGridView.DataSource = $partitions
+            } else {
+                $partitionDataGridView.DataSource = $null
+            }
+        }
+
+        Update-PartitionList
+
+        # Button to confirm partition selection
+        $btnConfirmSelect = New-Object System.Windows.Forms.Button
+        $btnConfirmSelect.Text = "Select"
+        $btnConfirmSelect.Location = New-Object System.Drawing.Point(10, 150)
+        $btnConfirmSelect.Add_Click({
+            $selectedPartition = $partitionDataGridView.CurrentRow
+            if ($selectedPartition) {
+                $action = "select partition $($selectedPartition.PartitionNumber)"
+                $selectedActions += $action
+                [System.Windows.Forms.MessageBox]::Show("Selected Partition: $($selectedPartition.PartitionNumber)", "Partition Selected", [System.Windows.Forms.MessageBoxButtons]::OK)
+                $partitionForm.Close()
+            } else {
+                [System.Windows.Forms.MessageBox]::Show("Please select a partition.", "No Partition Selected", [System.Windows.Forms.MessageBoxButtons]::OK)
+            }
+        })
+
+        # Button to create a new partition
+        $btnCreatePartition = New-Object System.Windows.Forms.Button
+        $btnCreatePartition.Text = "Create Partition"
+        $btnCreatePartition.Location = New-Object System.Drawing.Point(150, 150)
+        $btnCreatePartition.Add_Click({
+            # Open create partition options form
+            $createPartitionForm = New-Object System.Windows.Forms.Form
+            $createPartitionForm.Text = "Create Partition Options"
+            $createPartitionForm.Size = New-Object System.Drawing.Size(300, 200)
+            $createPartitionForm.StartPosition = "CenterParent"
+
+            # Create labels and controls for create partition options
+            $lblSize = New-Object System.Windows.Forms.Label
+            $lblSize.Text = "Size (MB):"
+            $lblSize.Location = New-Object System.Drawing.Point(10, 20)
+
+            $txtCreateSize = New-Object System.Windows.Forms.TextBox
+            $txtCreateSize.Location = New-Object System.Drawing.Point(100, 20)
+
+            $lblFileSystem = New-Object System.Windows.Forms.Label
+            $lblFileSystem.Text = "File System:"
+            $lblFileSystem.Location = New-Object System.Drawing.Point(10, 60)
+
+            $cboCreateFileSystem = New-Object System.Windows.Forms.ComboBox
+            $cboCreateFileSystem.Location = New-Object System.Drawing.Point(100, 60)
+            $cboCreateFileSystem.Items.AddRange("NTFS", "exFAT", "FAT32")
+
+            $btnCreate = New-Object System.Windows.Forms.Button
+            $btnCreate.Text = "Create"
+            $btnCreate.Location = New-Object System.Drawing.Point(10, 100)
+            $btnCreate.Add_Click({
+                $size = $txtCreateSize.Text
+                $fileSystem = $cboCreateFileSystem.SelectedItem
+
+                if ($size -and $fileSystem) {
+                    $action = "select partition $($selectedPartition.PartitionNumber)`r`n create partition primary size=$size`r`n format fs=$fileSystem"
+                    $selectedActions += $action
+                    [System.Windows.Forms.MessageBox]::Show("Created Partition: Size = $size MB, File System = $fileSystem", "Partition Created", [System.Windows.Forms.MessageBoxButtons]::OK)
+                    $createPartitionForm.Close()
+                } else {
+                    [System.Windows.Forms.MessageBox]::Show("Please specify both size and file system.", "Input Error", [System.Windows.Forms.MessageBoxButtons]::OK)
+                }
+            })
+
+            # Add controls to create partition form
+            $createPartitionForm.Controls.AddRange(@($lblSize, $txtCreateSize, $lblFileSystem, $cboCreateFileSystem, $btnCreate))
+            $createPartitionForm.ShowDialog()
+        })
+
+        # Add controls to partition selection form
+        $partitionForm.Controls.AddRange(@($partitionDataGridView, $btnConfirmSelect, $btnCreatePartition))
+        $partitionForm.ShowDialog()
     } else {
         [System.Windows.Forms.MessageBox]::Show("Please select a disk.", "No Disk Selected", [System.Windows.Forms.MessageBoxButtons]::OK)
     }
 })
 
-$btnClose = New-Object System.Windows.Forms.Button
-$btnClose.Location = New-Object System.Drawing.Point(280, 320)
-$btnClose.Size = New-Object System.Drawing.Size(75, 30)
-$btnClose.Text = "Close"
-$btnClose.Add_Click({ $form.Close() })
-
-# Add controls to the main form
-$form.Controls.Add($dataGridView)
-$form.Controls.Add($btnStart)
-$form.Controls.Add($btnFormat)
-$form.Controls.Add($btnStop)
-$form.Controls.Add($btnClose)
+# Add buttons to the form
+$form.Controls.AddRange(@($dataGridView, $btnStart, $btnFormat, $btnSelectPartition))
 
 # Show the main form
-$form.ShowDialog()
+$form.Add_Shown({$form.Activate()})
+[void]$form.ShowDialog()
